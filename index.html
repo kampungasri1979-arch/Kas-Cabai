@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Buku Kas Cabai</title>
+<link rel="manifest" href="./manifest.json" />
+<meta name="theme-color" content="#355E3B" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Kas Cabai" />
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  body { font-family: 'Inter', sans-serif; }
+  .font-display { font-family: 'Fraunces', serif; }
+  .font-mono { font-family: 'IBM Plex Mono', monospace; }
+  .stitch {
+    background-image: repeating-linear-gradient(to bottom, #C9B98C 0, #C9B98C 6px, transparent 6px, transparent 12px);
+  }
+</style>
+</head>
+<body class="bg-[#F6F1E4]">
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useMemo } = React;
+
+const EXPENSE_CATEGORIES = ["Bibit", "Pupuk", "Pestisida", "Tenaga Kerja", "Sewa Lahan", "Peralatan", "Lainnya"];
+const INCOME_CATEGORIES = ["Hasil Panen", "Lainnya"];
+const STORAGE_KEY = "cabai-transaksi";
+
+const fmtIDR = (n) =>
+  new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n || 0);
+
+const fmtDate = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso + "T00:00:00");
+  return d.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" });
+};
+
+const todayISO = () => new Date().toISOString().slice(0, 10);
+
+// Simple inline icons (no external icon library needed)
+const Icon = ({ children, size = 16, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    {children}
+  </svg>
+);
+const SproutIcon = (p) => <Icon {...p}><path d="M7 20h10" /><path d="M10 20c0-4 2-6 2-10" /><path d="M12 10C8 10 6 7 6 4c3 0 6 2 6 6Z" /><path d="M12 10c4 0 6-3 6-6-3 0-6 2-6 6Z" /></Icon>;
+const PlusIcon = (p) => <Icon {...p}><path d="M12 5v14M5 12h14" /></Icon>;
+const TrashIcon = (p) => <Icon {...p}><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></Icon>;
+const UpIcon = (p) => <Icon {...p}><path d="M23 6l-9.5 9.5-5-5L1 18" /><path d="M17 6h6v6" /></Icon>;
+const DownIcon = (p) => <Icon {...p}><path d="M23 18l-9.5-9.5-5 5L1 6" /><path d="M17 18h6v-6" /></Icon>;
+const ChevronIcon = (p) => <Icon {...p}><path d="M6 9l6 6 6-6" /></Icon>;
+
+function BukuKasCabai() {
+  const [transaksi, setTransaksi] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  const [tab, setTab] = useState("semua");
+  const [formOpen, setFormOpen] = useState(null);
+  const [form, setForm] = useState({ tanggal: todayISO(), kategori: "", keterangan: "", jumlah: "" });
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) setTransaksi(JSON.parse(raw));
+    } catch (e) {}
+    setLoaded(true);
+  }, []);
+
+  const persist = (next) => {
+    setTransaksi(next);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    } catch (e) {}
+  };
+
+  const openForm = (type) => {
+    setFormOpen(type);
+    setForm({
+      tanggal: todayISO(),
+      kategori: type === "masuk" ? INCOME_CATEGORIES[0] : EXPENSE_CATEGORIES[0],
+      keterangan: "",
+      jumlah: "",
+    });
+  };
+
+  const submitForm = (e) => {
+    e.preventDefault();
+    const jumlahNum = Number(String(form.jumlah).replace(/\./g, "").replace(/,/g, ""));
+    if (!jumlahNum || jumlahNum <= 0) return;
+    const entry = {
+      id: Date.now() + "-" + Math.random().toString(36).slice(2, 8),
+      type: formOpen,
+      tanggal: form.tanggal,
+      kategori: form.kategori,
+      keterangan: form.keterangan.trim(),
+      jumlah: jumlahNum,
+    };
+    persist([entry, ...transaksi]);
+    setFormOpen(null);
+  };
+
+  const hapus = (id) => persist(transaksi.filter((t) => t.id !== id));
+
+  const { totalMasuk, totalKeluar, saldo, perKategori } = useMemo(() => {
+    let masuk = 0, keluar = 0;
+    const kat = {};
+    transaksi.forEach((t) => {
+      if (t.type === "masuk") masuk += t.jumlah;
+      else {
+        keluar += t.jumlah;
+        kat[t.kategori] = (kat[t.kategori] || 0) + t.jumlah;
+      }
+    });
+    return { totalMasuk: masuk, totalKeluar: keluar, saldo: masuk - keluar, perKategori: kat };
+  }, [transaksi]);
+
+  const daftarFiltered = useMemo(() => {
+    const sorted = [...transaksi].sort((a, b) => (a.tanggal < b.tanggal ? 1 : -1));
+    if (tab === "masuk") return sorted.filter((t) => t.type === "masuk");
+    if (tab === "keluar") return sorted.filter((t) => t.type === "keluar");
+    return sorted;
+  }, [transaksi, tab]);
+
+  const maxKategori = Math.max(1, ...Object.values(perKategori));
+
+  return (
+    <div className="min-h-screen bg-[#F6F1E4] text-[#2A2418]">
+      <header className="border-b-2 border-[#2A2418]/10 px-5 pt-8 pb-6">
+        <div className="flex items-center gap-3">
+          <div className="w-11 h-11 rounded-full bg-[#C1361F] flex items-center justify-center shrink-0 shadow-sm">
+            <SproutIcon size={22} color="#F6F1E4" />
+          </div>
+          <div>
+            <h1 className="font-display text-2xl font-semibold tracking-tight text-[#355E3B]">Buku Kas Cabai</h1>
+            <p className="text-[13px] text-[#2A2418]/60 -mt-0.5">Catatan pemasukan &amp; pengeluaran kebun</p>
+          </div>
+        </div>
+      </header>
+
+      {!loaded ? (
+        <div className="flex justify-center py-24 text-[#2A2418]/50 text-sm">Memuat...</div>
+      ) : (
+        <>
+          <section className="px-5 pt-5 max-w-xl mx-auto">
+            <div className={`rounded-2xl p-5 shadow-sm border ${saldo >= 0 ? "bg-[#355E3B] border-[#2A4A2C]" : "bg-[#C1361F] border-[#9c2b17]"}`}>
+              <div className="flex items-center justify-between">
+                <span className="text-[13px] font-medium text-white/75 uppercase tracking-wide">
+                  {saldo >= 0 ? "Untung" : "Rugi"} sampai saat ini
+                </span>
+                {saldo >= 0 ? <UpIcon size={18} color="white" /> : <DownIcon size={18} color="white" />}
+              </div>
+              <div className="font-mono text-3xl font-semibold text-white mt-1">
+                {saldo < 0 && "-"}{fmtIDR(Math.abs(saldo))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 mt-3">
+              <div className="rounded-xl bg-white/70 border border-[#2A2418]/10 p-3.5">
+                <div className="flex items-center gap-1.5 text-[#355E3B]">
+                  <UpIcon size={14} />
+                  <span className="text-[12px] font-medium uppercase tracking-wide">Pemasukan</span>
+                </div>
+                <div className="font-mono text-lg font-semibold mt-1">{fmtIDR(totalMasuk)}</div>
+              </div>
+              <div className="rounded-xl bg-white/70 border border-[#2A2418]/10 p-3.5">
+                <div className="flex items-center gap-1.5 text-[#C1361F]">
+                  <DownIcon size={14} />
+                  <span className="text-[12px] font-medium uppercase tracking-wide">Pengeluaran</span>
+                </div>
+                <div className="font-mono text-lg font-semibold mt-1">{fmtIDR(totalKeluar)}</div>
+              </div>
+            </div>
+          </section>
+
+          {Object.keys(perKategori).length > 0 && (
+            <section className="px-5 mt-5 max-w-xl mx-auto">
+              <h2 className="text-[13px] font-semibold text-[#2A2418]/60 uppercase tracking-wide mb-2">Pengeluaran per Kategori</h2>
+              <div className="rounded-xl bg-white/70 border border-[#2A2418]/10 p-4 space-y-2.5">
+                {Object.entries(perKategori).sort((a, b) => b[1] - a[1]).map(([kat, jml]) => (
+                  <div key={kat}>
+                    <div className="flex justify-between text-[13px] mb-1">
+                      <span>{kat}</span>
+                      <span className="font-mono text-[#2A2418]/70">{fmtIDR(jml)}</span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-[#2A2418]/8 overflow-hidden">
+                      <div className="h-full rounded-full bg-[#C1361F]" style={{ width: (jml / maxKategori) * 100 + "%" }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          <section className="px-5 mt-5 max-w-xl mx-auto grid grid-cols-2 gap-3">
+            <button onClick={() => openForm("masuk")} className="flex items-center justify-center gap-1.5 rounded-xl bg-[#355E3B] text-white py-3 text-sm font-semibold shadow-sm active:scale-[0.98] transition">
+              <PlusIcon size={16} /> Pemasukan
+            </button>
+            <button onClick={() => openForm("keluar")} className="flex items-center justify-center gap-1.5 rounded-xl bg-[#C1361F] text-white py-3 text-sm font-semibold shadow-sm active:scale-[0.98] transition">
+              <PlusIcon size={16} /> Pengeluaran
+            </button>
+          </section>
+
+          <section className="px-5 mt-6 max-w-xl mx-auto">
+            <div className="flex gap-1 bg-[#2A2418]/6 rounded-lg p-1 w-fit">
+              {[["semua", "Semua"], ["masuk", "Masuk"], ["keluar", "Keluar"]].map(([key, label]) => (
+                <button key={key} onClick={() => setTab(key)} className={"px-3.5 py-1.5 rounded-md text-[13px] font-medium transition " + (tab === key ? "bg-white shadow-sm text-[#2A2418]" : "text-[#2A2418]/55")}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-4 relative pl-4">
+              <div className="absolute left-1 top-1 bottom-1 w-px stitch" />
+              {daftarFiltered.length === 0 ? (
+                <p className="text-[13px] text-[#2A2418]/45 py-8 text-center">
+                  Belum ada catatan. Mulai tambahkan pemasukan atau pengeluaran di atas.
+                </p>
+              ) : (
+                <ul className="space-y-2 pb-8">
+                  {daftarFiltered.map((t) => (
+                    <li key={t.id} className="flex items-center justify-between gap-3 bg-white/70 border border-[#2A2418]/10 rounded-xl px-4 py-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 text-[11px] text-[#2A2418]/50 font-mono">
+                          <span>{fmtDate(t.tanggal)}</span>
+                          <span>&middot;</span>
+                          <span className="truncate">{t.kategori}</span>
+                        </div>
+                        <div className="text-[14px] font-medium truncate">
+                          {t.keterangan || (t.type === "masuk" ? "Pemasukan" : "Pengeluaran")}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className={"font-mono text-[14px] font-semibold " + (t.type === "masuk" ? "text-[#355E3B]" : "text-[#C1361F]")}>
+                          {t.type === "masuk" ? "+" : "-"}{fmtIDR(t.jumlah)}
+                        </span>
+                        <button onClick={() => hapus(t.id)} className="text-[#2A2418]/30 hover:text-[#C1361F] transition p-1" aria-label="Hapus catatan">
+                          <TrashIcon size={15} />
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </section>
+        </>
+      )}
+
+      {formOpen && (
+        <div className="fixed inset-0 bg-[#2A2418]/40 flex items-end sm:items-center justify-center z-50 p-0 sm:p-5">
+          <form onSubmit={submitForm} className="bg-[#F6F1E4] w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl p-5 pb-6 shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-display text-lg font-semibold">Tambah {formOpen === "masuk" ? "Pemasukan" : "Pengeluaran"}</h3>
+              <button type="button" onClick={() => setFormOpen(null)} className="text-[#2A2418]/40 text-sm">Batal</button>
+            </div>
+
+            <label className="block text-[12px] font-medium text-[#2A2418]/60 mb-1">Tanggal</label>
+            <input type="date" value={form.tanggal} onChange={(e) => setForm({ ...form, tanggal: e.target.value })} className="w-full rounded-lg border border-[#2A2418]/15 bg-white px-3 py-2.5 text-sm mb-3" required />
+
+            <label className="block text-[12px] font-medium text-[#2A2418]/60 mb-1">Kategori</label>
+            <div className="relative mb-3">
+              <select value={form.kategori} onChange={(e) => setForm({ ...form, kategori: e.target.value })} className="w-full appearance-none rounded-lg border border-[#2A2418]/15 bg-white px-3 py-2.5 text-sm pr-9">
+                {(formOpen === "masuk" ? INCOME_CATEGORIES : EXPENSE_CATEGORIES).map((k) => <option key={k} value={k}>{k}</option>)}
+              </select>
+              <ChevronIcon size={15} className="absolute right-3 top-3 text-[#2A2418]/40 pointer-events-none" />
+            </div>
+
+            <label className="block text-[12px] font-medium text-[#2A2418]/60 mb-1">Keterangan (opsional)</label>
+            <input type="text" value={form.keterangan} onChange={(e) => setForm({ ...form, keterangan: e.target.value })} placeholder={formOpen === "masuk" ? "cth. Panen minggu ke-3" : "cth. Pupuk NPK 2 sak"} className="w-full rounded-lg border border-[#2A2418]/15 bg-white px-3 py-2.5 text-sm mb-3" />
+
+            <label className="block text-[12px] font-medium text-[#2A2418]/60 mb-1">Jumlah (Rp)</label>
+            <input type="number" inputMode="numeric" min="0" value={form.jumlah} onChange={(e) => setForm({ ...form, jumlah: e.target.value })} placeholder="0" className="w-full rounded-lg border border-[#2A2418]/15 bg-white px-3 py-2.5 text-sm font-mono mb-5" required />
+
+            <button type="submit" className={"w-full rounded-xl py-3 text-sm font-semibold text-white shadow-sm " + (formOpen === "masuk" ? "bg-[#355E3B]" : "bg-[#C1361F]")}>
+              Simpan
+            </button>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<BukuKasCabai />);
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js").catch(() => {});
+  });
+}
+</script>
+</body>
+</html>
